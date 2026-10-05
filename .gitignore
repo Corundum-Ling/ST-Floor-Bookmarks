@@ -1,0 +1,17 @@
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+
+# 依赖（本插件无依赖，防止误提交）
+node_modules/
+
+# 开发记录（仅本地留存，不随插件发布）
+开发记录.md

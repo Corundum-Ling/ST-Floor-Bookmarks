@@ -1,0 +1,14 @@
+{
+  "display_name": "楼层书签 (Floor Bookmarks)",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "CorunLing",
+  "version": "1.0.0",
+  "homePage": "",
+  "auto_update": true,
+  "github_url": "https://github.com/Corundum-Ling/ST-Floor-Bookmarks",
+  "description": "收藏指定楼层的聊天记录，支持回看、跳转、导出。"
+}

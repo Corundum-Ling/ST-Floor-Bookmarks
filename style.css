@@ -1,0 +1,509 @@
+/* 楼层书签 (Floor Bookmarks) — 样式
+   配色全部走 ST 自身 CSS 变量，自动跟随昼/夜主题 */
+
+/* ══════ 消息上的书签按钮 ══════ */
+.fb-star {
+    cursor: pointer;
+    opacity: .30;
+    transition: opacity .15s, color .15s, transform .15s;
+}
+
+.fb-star:hover {
+    opacity: 1;
+    transform: scale(1.15);
+}
+
+/* 已收藏：金色常亮 */
+.fb-star.fb-on {
+    opacity: 1;
+    color: #f5c542;
+    text-shadow: 0 0 6px rgba(245, 197, 66, .55);
+}
+
+/* 跳转时的高亮闪烁 */
+.mes.fb-flash {
+    animation: fb-flash-kf 1.2s ease-out;
+}
+
+@keyframes fb-flash-kf {
+    0%   { box-shadow: inset 0 0 0 3px rgba(245, 197, 66, .9); }
+    100% { box-shadow: inset 0 0 0 3px rgba(245, 197, 66, 0); }
+}
+
+/* ══════ 面板 ══════ */
+#fb-panel {
+    position: fixed;
+    top: 60px;
+    right: auto;
+    left: auto;
+    width: 420px;
+    max-width: calc(100vw - 8px);
+    max-height: calc(100vh - 8px);
+    display: none;
+    flex-direction: column;
+    z-index: 30000;
+    background: var(--SmartThemeBlurTintColor, #1e1e1e);
+    color: var(--SmartThemeBodyColor, #ddd);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .5);
+    backdrop-filter: blur(10px);
+    font-size: 14px;
+    min-width: 240px;
+    min-height: 160px;
+    overflow: hidden;
+}
+
+#fb-panel.fb-show {
+    display: flex;
+}
+
+#fb-panel.fb-dragging,
+#fb-panel.fb-resizing {
+    user-select: none;
+    opacity: .95;
+}
+
+/* 折叠状态：只留标题栏 */
+#fb-panel.fb-collapsed {
+    height: auto !important;
+    min-height: 0;
+}
+
+#fb-panel.fb-collapsed .fb-body { display: none; }
+
+/* ── 头部（拖动把手）── */
+.fb-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    font-weight: bold;
+    cursor: grab;
+    touch-action: none;          /* 触屏拖动必需 */
+    flex-shrink: 0;
+}
+
+.fb-head:active { cursor: grabbing; }
+
+.fb-grip {
+    opacity: .45;
+    font-size: 13px;
+}
+
+.fb-count {
+    margin-left: auto;
+    font-weight: normal;
+    opacity: .6;
+    font-size: 12px;
+}
+
+.fb-btn {
+    cursor: pointer;
+    opacity: .55;
+    font-size: 13px;
+}
+
+.fb-btn:hover { opacity: 1; }
+
+/* ── 主体 ── */
+.fb-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+/* ── 筛选区 ── */
+.fb-filters {
+    display: flex;
+    gap: 6px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    flex-shrink: 0;
+}
+
+.fb-filters .fb-search {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    height: 28px;
+    margin: 0;
+}
+
+.fb-filters .fb-filter {
+    width: 130px;
+    font-size: 13px;
+    height: 28px;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+/* ── 列表 ── */
+.fb-list {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 6px;
+    flex: 1;
+    min-height: 0;
+}
+
+.fb-empty {
+    padding: 28px 12px;
+    text-align: center;
+    opacity: .5;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+/* ── 角色卡分组 ── */
+.fb-group {
+    margin-bottom: 8px;
+}
+
+.fb-group-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, .06);
+    font-size: 13px;
+    user-select: none;
+}
+
+.fb-group-head:hover { background: rgba(255, 255, 255, .11); }
+
+.fb-caret {
+    font-size: 10px;
+    opacity: .55;
+    transition: transform .15s;
+}
+
+.fb-group.fb-gcollapsed .fb-caret { transform: rotate(-90deg); }
+.fb-group.fb-gcollapsed .fb-group-body { display: none; }
+
+.fb-gicon { opacity: .6; font-size: 12px; }
+
+.fb-gname {
+    font-weight: bold;
+    color: var(--SmartThemeQuoteColor, #8ab4f8);
+}
+
+.fb-gcount {
+    margin-left: auto;
+    opacity: .5;
+    font-size: 11px;
+}
+
+/* ── 聊天分组（第二级）── */
+.fb-chat {
+    margin: 4px 0 4px 10px;
+    border-left: 2px solid var(--SmartThemeBorderColor, #444);
+    padding-left: 8px;
+}
+
+.fb-chat.fb-chat-cur {
+    border-left-color: #f5c542;
+}
+
+.fb-chat-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 2px;
+    font-size: 12px;
+    opacity: .75;
+}
+
+.fb-chicon { font-size: 11px; opacity: .6; }
+
+.fb-chname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fb-cur-tag {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(245, 197, 66, .2);
+    color: #f5c542;
+    flex-shrink: 0;
+}
+
+.fb-chcount {
+    margin-left: auto;
+    opacity: .5;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+/* ── 条目 ── */
+.fb-item {
+    position: relative;
+    padding: 7px 9px;
+    border-radius: 6px;
+    margin-bottom: 3px;
+    background: rgba(255, 255, 255, .04);
+    border-left: 3px solid #f5c542;
+}
+
+.fb-item:hover { background: rgba(255, 255, 255, .09); }
+
+.fb-meta {
+    display: flex;
+    gap: 7px;
+    align-items: baseline;
+    margin-bottom: 4px;
+    font-size: 11px;
+    flex-wrap: wrap;
+    /* 给右上角的操作按钮让位：4 个图标(12px) + 3 道间隙(9px) + 右侧偏移(7px) ≈ 82px，
+       留白取 100px 确保不贴边。触屏上按钮常显，所以不做 hover 区分。 */
+    padding-right: 100px;
+    min-height: 16px;
+}
+
+.fb-sender {
+    font-weight: bold;
+    color: var(--SmartThemeQuoteColor, #8ab4f8);
+    font-size: 12px;
+}
+
+.fb-where { opacity: .55; }
+
+.fb-swipe {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(245, 197, 66, .18);
+    color: #f5c542;
+}
+
+.fb-time {
+    opacity: .4;
+    font-size: 10px;
+}
+
+/* 时间独占一行放在底部，避开右上角的操作按钮区 */
+.fb-foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 3px;
+    min-height: 12px;
+}
+
+.fb-text {
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: .85;
+    white-space: pre-wrap;
+    word-break: break-word;
+    cursor: pointer;
+    /* 长内容截断，点开看全文 */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.fb-text:hover { opacity: 1; }
+
+/* ── 条目操作按钮 ── */
+.fb-acts {
+    position: absolute;
+    top: 5px;
+    right: 7px;
+    display: flex;
+    gap: 9px;
+    opacity: 0;
+    transition: opacity .15s;
+}
+
+.fb-item:hover .fb-acts { opacity: 1; }
+
+/* 触屏设备：始终显示操作按钮（没有 hover） */
+@media (hover: none) {
+    .fb-acts { opacity: .75; }
+}
+
+.fb-acts i {
+    cursor: pointer;
+    font-size: 12px;
+    opacity: .6;
+}
+
+.fb-acts i:hover { opacity: 1; }
+.fb-del:hover { color: #e57373; }
+.fb-view:hover { color: #8ab4f8; }
+.fb-export:hover { color: #81c784; }
+.fb-goto:hover { color: #f5c542; }
+
+/* ── 缩放把手 ── */
+.fb-resize {
+    position: absolute;
+    z-index: 2;
+    touch-action: none;
+}
+
+.fb-resize-r,
+.fb-resize-l {
+    top: 0;
+    bottom: 14px;
+    width: 7px;
+    cursor: ew-resize;
+}
+
+.fb-resize-r { right: 0; }
+.fb-resize-l { left: 0; }
+
+.fb-resize-b {
+    left: 14px;
+    right: 14px;
+    bottom: 0;
+    height: 7px;
+    cursor: ns-resize;
+}
+
+.fb-resize-se,
+.fb-resize-sw {
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+}
+
+.fb-resize-se { right: 0; }
+.fb-resize-sw { left: 0; cursor: nesw-resize; }
+
+/* 视觉提示：右下角三条斜线 */
+.fb-resize-se::after {
+    content: '';
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    opacity: .3;
+}
+
+#fb-panel.fb-collapsed .fb-resize { display: none; }
+
+/* ══════ 完整消息查看器 ══════ */
+/* 注意：酒馆的 html 元素带着 `-webkit-transform: translateZ(0)`
+   （public/style.css:145），这会让 position:fixed 失去视口基准。
+   因此这里不依赖 inset/translate 居中，改由 JS 直接写像素坐标
+   （见 placeViewer()），跟面板同一套做法。 */
+
+#fb-viewer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    z-index: 30100;
+    display: none;
+}
+
+#fb-viewer.fbv-show { display: block; }
+
+/* 遮罩：尺寸由 JS 写死，覆盖整个视口 */
+.fbv-mask {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, .55);
+}
+
+.fbv-box {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    background: var(--SmartThemeBlurTintColor, #1e1e1e);
+    color: var(--SmartThemeBodyColor, #ddd);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, .6);
+    overflow: hidden;
+    margin: 0;
+}
+
+.fbv-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+.fbv-close {
+    margin-left: auto;
+    cursor: pointer;
+    opacity: .6;
+}
+
+.fbv-close:hover { opacity: 1; }
+
+.fbv-meta {
+    padding: 6px 14px;
+    font-size: 12px;
+    opacity: .55;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+    flex-shrink: 0;
+}
+
+.fbv-body {
+    padding: 14px;
+    overflow-y: auto;
+    line-height: 1.7;
+    font-size: 14px;
+    min-height: 0;
+    /* 保留原消息里的排版 */
+    word-break: break-word;
+}
+
+.fbv-body img {
+    max-width: 100%;
+    height: auto;
+}
+
+.fbv-body p { margin: 0 0 .8em; }
+
+/* ══════ 移动端适配 ══════ */
+
+@media (max-width: 600px) {
+    #fb-panel {
+        width: calc(100vw - 12px) !important;
+        max-width: calc(100vw - 12px) !important;
+        min-width: 0;
+        /* 移动端默认贴近底部，便于拇指操作 */
+        border-radius: 10px;
+    }
+
+    .fb-filters {
+        flex-direction: column;
+    }
+
+    .fb-filters .fb-filter {
+        width: 100%;
+    }
+
+    /* 移动端不需要左右缩放把手（太窄，容易误触） */
+    .fb-resize-l,
+    .fb-resize-r {
+        display: none;
+    }
+
+    /* 移动端标注：查看器尺寸由 JS 的 placeViewer() 统一算，
+       这里只调整内边距和字号 */
+    .fbv-body { padding: 12px; font-size: 15px; }
+}
