@@ -2,7 +2,8 @@
  * SillyTavern 插件: 楼层书签 (Floor Bookmarks)
  *
  * 定位: 构画(ST-SevenDaysCal)「坐标」功能的轻量平替。
- *      只做「收藏楼层 + 回看 + 跳转」，不含标签/日程/大纲等重型功能。
+ *      只做「收藏楼层 + 回看 + 跳转 + 单条标注(标题/标签)」，
+ *      不含标签体系管理、日程、大纲等重型功能。
  *
  * 适用: SillyTavern 1.18.0
  * 安装: data/default-user/extensions/ST-FloorBookmarks/
@@ -24,6 +25,11 @@ const INDEX_FILE = 'fb-index.json';
 const FILE_PREFIX = 'fb-';
 const SCHEMA_VERSION = 1;
 
+// 标题与标签的边界（防止单条收藏被塞成一本书）
+const MAX_TITLE_LEN = 60;
+const MAX_TAGS = 5;
+const MAX_TAG_LEN = 20;
+
 const CTX_WAIT_MS = 200;
 const CTX_TIMEOUT_MS = 30000;
 
@@ -32,6 +38,12 @@ let panelEl = null;
 let indexCache = null;      // { version, items: [] }
 let writeQueue = Promise.resolve();
 let ctxReady = false;
+
+// 查看器里正在编辑的条目：{ id, tags: [] }
+let editCtx = null;
+// 上一次渲染的「已有标签」列表，供点击时按下标取回（避免把中文塞进 data-*）
+let editPoolTags = [];
+let editingComposing = false;
 
 // ── 上下文 ────────────────────────────────────────
 
@@ -120,6 +132,23 @@ function emptyIndex() {
     return { version: SCHEMA_VERSION, items: [] };
 }
 
+/**
+ * 把任意输入规整成合法标签数组：去空白、去重、限长、限数量。
+ * 老索引里没有 tags 字段 —— 走 Array.isArray 兜底成空数组，不需要迁移脚本。
+ */
+function normTags(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const t of raw) {
+        if (typeof t !== 'string') continue;
+        const v = t.trim().slice(0, MAX_TAG_LEN);
+        if (!v || out.includes(v)) continue;
+        out.push(v);
+        if (out.length >= MAX_TAGS) break;
+    }
+    return out;
+}
+
 function normalizeIndex(raw) {
     if (!raw || typeof raw !== 'object' || !Array.isArray(raw.items)) return null;
     return {
@@ -135,6 +164,8 @@ function normalizeIndex(raw) {
             sender: String(i.sender || ''),
             preview: String(i.preview || ''),
             ts: Number(i.ts) || 0,
+            title: String(i.title || '').trim().slice(0, MAX_TITLE_LEN),
+            tags: normTags(i.tags),
         })),
     };
 }
@@ -362,6 +393,8 @@ async function toggleBookmark(mesid, btn) {
                 sender: snap.sender,
                 preview: makePreview(snap.html),
                 ts: Date.now(),
+                title: '',
+                tags: [],
             };
 
             await enqueue(async () => {
@@ -845,6 +878,8 @@ function visibleItems() {
     if (kw) {
         items = items.filter(i =>
             String(i.preview || '').toLowerCase().includes(kw) ||
+            String(i.title || '').toLowerCase().includes(kw) ||
+            (Array.isArray(i.tags) && i.tags.some(t => t.toLowerCase().includes(kw))) ||
             String(i.sender || '').toLowerCase().includes(kw) ||
             String(i.chatName || '').toLowerCase().includes(kw) ||
             String(i.charName || '').toLowerCase().includes(kw)
@@ -897,6 +932,9 @@ function renderPanel() {
             for (const i of ch.items.slice().sort((a, b) => (a.floor - b.floor))) {
                 const swipe = Number(i.swipeId) > 0
                     ? `<span class="fb-swipe">版本${Number(i.swipeId) + 1}</span>` : '';
+                const title = String(i.title || '').trim();
+                const tags = Array.isArray(i.tags) ? i.tags : [];
+                // 有标题时正文降为副行并收紧行数，避免一条占掉半屏
                 html += `
                 <div class="fb-item" data-id="${escapeAttr(i.id)}">
                     <div class="fb-meta">
@@ -904,11 +942,15 @@ function renderPanel() {
                         <span class="fb-where">第 ${Number(i.floor) + 1} 层</span>
                         ${swipe}
                     </div>
-                    <div class="fb-text">${escapeHtml(i.preview)}</div>
+                    ${title ? `<div class="fb-title">${escapeHtml(title)}</div>` : ''}
+                    <div class="fb-text${title ? ' fb-text-sub' : ''}">${escapeHtml(i.preview)}</div>
+                    ${tags.length ? `<div class="fb-tags">${tags
+                        .map(t => `<span class="fb-tag">${escapeHtml(t)}</span>`).join('')}</div>` : ''}
                     <div class="fb-foot">
                         <span class="fb-time">${formatTime(i.ts)}</span>
                     </div>
                     <div class="fb-acts">
+                        <i class="fa-solid fa-pen fb-edit" title="编辑标题与标签"></i>
                         <i class="fa-solid fa-file-arrow-down fb-export" title="导出为 Markdown"></i>
                         <i class="fa-solid fa-eye fb-view" title="查看完整消息"></i>
                         <i class="fa-solid fa-arrow-right-to-bracket fb-goto" title="跳转到该层"></i>
@@ -941,6 +983,10 @@ function renderPanel() {
             e.stopPropagation();
             gotoFloor(id);
         });
+        el.querySelector('.fb-edit')?.addEventListener('click', e => {
+            e.stopPropagation();
+            viewFull(id, true);
+        });
         el.querySelector('.fb-export')?.addEventListener('click', e => {
             e.stopPropagation();
             exportOne(id);
@@ -951,6 +997,10 @@ function renderPanel() {
         });
         // 点击条目正文 = 查看完整消息（列表里最自然的默认动作）
         el.querySelector('.fb-text')?.addEventListener('click', e => {
+            e.stopPropagation();
+            viewFull(id);
+        });
+        el.querySelector('.fb-title')?.addEventListener('click', e => {
             e.stopPropagation();
             viewFull(id);
         });
@@ -969,7 +1019,17 @@ function formatTime(ts) {
 
 let viewerEl = null;
 
-async function viewFull(id) {
+/**
+ * 打开「查看完整消息」弹窗，同时也是标题/标签的编辑场所。
+ *
+ * 为什么编辑放在这里而不是面板里：
+ * 面板条目每次 renderPanel 都整体重建 innerHTML，内联输入框会失焦；
+ * 而且手机上面板窄，标签编辑器塞不下。弹窗空间充足且已有像素定位逻辑。
+ *
+ * @param {string} id        收藏条目 id
+ * @param {boolean} focusEdit 是否直接把光标放进标题框（面板铅笔按钮用）
+ */
+async function viewFull(id, focusEdit = false) {
     const meta = indexCache?.items.find(i => i.id === id);
     if (!meta) return;
 
@@ -993,13 +1053,27 @@ async function viewFull(id) {
                     <i class="fa-solid fa-xmark fbv-close" title="关闭"></i>
                 </div>
                 <div class="fbv-meta"></div>
+                <div class="fbv-edit">
+                    <input class="fbv-title-in" type="text" maxlength="${MAX_TITLE_LEN}"
+                           placeholder="给这条收藏起个标题（可留空）">
+                    <div class="fbv-chips"></div>
+                    <input class="fbv-tag-in" type="text" maxlength="${MAX_TAG_LEN}"
+                           placeholder="输入标签后回车，或点下方已有标签">
+                    <div class="fbv-pool"></div>
+                </div>
                 <div class="fbv-body"></div>
             </div>`;
         document.body.appendChild(viewerEl);
 
         viewerEl.querySelector('.fbv-close').addEventListener('click', closeViewer);
         viewerEl.querySelector('.fbv-mask').addEventListener('click', closeViewer);
+        bindEditHandlers();
     }
+
+    // ── 每次打开都要按当前条目重置编辑状态 ──
+    editCtx = { id, tags: [...(meta.tags || [])] };
+    viewerEl.querySelector('.fbv-title-in').value = meta.title || '';
+    renderEditTags();
 
     viewerEl.querySelector('.fbv-title').textContent =
         `${meta.sender || '(无名)'} · 第 ${Number(meta.floor) + 1} 层`;
@@ -1014,6 +1088,136 @@ async function viewFull(id) {
 
     viewerEl.classList.add('fbv-show');
     placeViewer();          // 显示后立刻算一次真实尺寸
+
+    if (focusEdit) {
+        const input = viewerEl.querySelector('.fbv-title-in');
+        input.focus();
+        input.select?.();
+    }
+}
+
+// ── 标题 / 标签编辑 ───────────────────────────────
+
+/** 收集全部收藏里出现过的标签，去重排序后供选择器展示 */
+function collectAllTags() {
+    const seen = new Set();
+    for (const it of indexCache?.items ?? []) {
+        for (const t of (it.tags || [])) {
+            if (t) seen.add(t);
+        }
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b, 'zh'));
+}
+
+function renderEditTags() {
+    if (!viewerEl || !editCtx) return;
+
+    // 注意：data-* 里存的是下标而不是标签文本。
+    // escapeAttr 只保留 [a-zA-Z0-9_-]，中文标签会被整条清空 → 点了没反应。
+    const chips = viewerEl.querySelector('.fbv-chips');
+    chips.innerHTML = editCtx.tags
+        .map((t, i) => `<span class="fbv-chip">${escapeHtml(t)}<i class="fa-solid fa-xmark fbv-chip-x" data-i="${i}" title="移除"></i></span>`)
+        .join('');
+
+    editPoolTags = collectAllTags().filter(t => !editCtx.tags.includes(t));
+    viewerEl.querySelector('.fbv-pool').innerHTML = editPoolTags.length
+        ? `<span class="fbv-pool-lb">已有</span>${editPoolTags
+            .map((t, i) => `<span class="fbv-pool-tag" data-i="${i}">${escapeHtml(t)}</span>`)
+            .join('')}`
+        : '';
+
+    const tagIn = viewerEl.querySelector('.fbv-tag-in');
+    const full = editCtx.tags.length >= MAX_TAGS;
+    tagIn.disabled = full;
+    tagIn.placeholder = full
+        ? `标签最多 ${MAX_TAGS} 个`
+        : '输入标签后回车，或点下方已有标签';
+}
+
+/** 把改动写进内存索引并落盘，随后刷新面板。失败要能看见，不能静默。 */
+async function commitEdit(patch) {
+    const item = indexCache?.items.find(i => i.id === editCtx?.id);
+    if (!item) return;
+    Object.assign(item, patch);
+    try {
+        await enqueue(() => saveIndex());
+        renderPanel();
+    } catch (e) {
+        console.error(`[${PLUGIN}]`, e);
+        toastr?.error?.(`保存失败: ${e.message}`);
+    }
+}
+
+function addTag(raw) {
+    if (!editCtx) return;
+    const v = String(raw || '').trim().slice(0, MAX_TAG_LEN);
+    if (!v || editCtx.tags.includes(v)) return;
+    if (editCtx.tags.length >= MAX_TAGS) {
+        toastr?.warning?.(`标签最多 ${MAX_TAGS} 个`);
+        return;
+    }
+    editCtx.tags.push(v);
+    renderEditTags();
+    commitEdit({ tags: [...editCtx.tags] });
+}
+
+function removeTag(tag) {
+    if (!editCtx) return;
+    editCtx.tags = editCtx.tags.filter(t => t !== tag);
+    renderEditTags();
+    commitEdit({ tags: [...editCtx.tags] });
+}
+
+function bindEditHandlers() {
+    const titleIn = viewerEl.querySelector('.fbv-title-in');
+    const tagIn = viewerEl.querySelector('.fbv-tag-in');
+
+    // 标题：回车或失焦时保存
+    const saveTitle = () => {
+        if (!editCtx) return;
+        const item = indexCache?.items.find(i => i.id === editCtx.id);
+        const v = String(titleIn.value || '').trim().slice(0, MAX_TITLE_LEN);
+        if (item && v === String(item.title || '')) return;
+        commitEdit({ title: v });
+    };
+    titleIn.addEventListener('change', saveTitle);
+    titleIn.addEventListener('blur', saveTitle);
+    titleIn.addEventListener('keydown', e => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveTitle();
+            titleIn.blur();
+        }
+    });
+
+    // 标签输入：回车/逗号添加，退格在空输入时删掉最后一个
+    tagIn.addEventListener('keydown', e => {
+        e.stopPropagation();
+        // 输入法选词时的回车不算提交
+        if (editingComposing) return;
+        if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
+            e.preventDefault();
+            addTag(tagIn.value);
+            tagIn.value = '';
+        } else if (e.key === 'Backspace' && !tagIn.value && editCtx?.tags.length) {
+            removeTag(editCtx.tags[editCtx.tags.length - 1]);
+        }
+    });
+
+    // 中文输入法：选词时的回车不能当成提交
+    tagIn.addEventListener('compositionstart', () => { editingComposing = true; });
+    tagIn.addEventListener('compositionend', () => { editingComposing = false; });
+
+    // 点已有标签加入 / 点 chip 上的 × 移除
+    viewerEl.querySelector('.fbv-pool').addEventListener('click', e => {
+        const el = e.target.closest('.fbv-pool-tag');
+        if (el) addTag(editPoolTags[Number(el.dataset.i)]);
+    });
+    viewerEl.querySelector('.fbv-chips').addEventListener('click', e => {
+        const el = e.target.closest('.fbv-chip-x');
+        if (el && editCtx) removeTag(editCtx.tags[Number(el.dataset.i)]);
+    });
 }
 
 /**
@@ -1063,6 +1267,7 @@ function placeViewer() {
 
 function closeViewer() {
     viewerEl?.classList.remove('fbv-show');
+    editCtx = null;
 }
 
 // ── 单条导出 ──────────────────────────────────────
@@ -1087,10 +1292,15 @@ async function exportOne(id) {
     const body = htmlToMarkdown(full?.html || meta.preview || '');
     const lines = [];
 
-    lines.push(`# ${meta.sender || '(无名)'} · 第 ${Number(meta.floor) + 1} 层`);
+    const title = String(meta.title || '').trim();
+    const tags = Array.isArray(meta.tags) ? meta.tags : [];
+
+    lines.push(`# ${title ? `${title} — ` : ''}${meta.sender || '(无名)'} · 第 ${Number(meta.floor) + 1} 层`);
     lines.push('');
     lines.push('| 项目 | 值 |');
     lines.push('| --- | --- |');
+    if (title) lines.push(`| 标题 | ${mdCell(title)} |`);
+    if (tags.length) lines.push(`| 标签 | ${mdCell(tags.join(' · '))} |`);
     lines.push(`| 角色卡 | ${mdCell(meta.charName || '')} |`);
     lines.push(`| 聊天 | ${mdCell(meta.chatName || '')} |`);
     lines.push(`| 楼层 | 第 ${Number(meta.floor) + 1} 层（mesid ${Number(meta.floor)}） |`);
@@ -1106,10 +1316,10 @@ async function exportOne(id) {
 
     const md = lines.join('\n');
 
-    // 文件名：角色卡-聊天-层号.md，去掉文件系统不接受的字符
+    // 文件名：有标题用标题，否则用角色卡；后面接聊天名和层号
     const safe = s => String(s || '').replace(/[\\/:*?"<>|]/g, '_').trim();
     const name = [
-        safe(meta.charName || 'unknown'),
+        safe(title || meta.charName || 'unknown'),
         safe(meta.chatName || ''),
         `第${Number(meta.floor) + 1}层`,
     ].filter(Boolean).join('-').slice(0, 120);
