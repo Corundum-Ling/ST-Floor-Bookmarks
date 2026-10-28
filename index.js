@@ -1048,6 +1048,10 @@ let viewerEmptyText = '';
 // 划重点浮条与当前选区（offsets 以 .fbv-body 的 textContent 为基准）
 let markBarEl = null;
 let markSel = null;
+// 手指按在浮条上时，要挡住 selectionchange 引发的「选区没了→关浮条」，
+// 否则手机上点色块的瞬间浮条先自己消失，click 却还落在它身上
+let selGuardUntil = 0;
+let selTimer = 0;
 // 复制格式选择菜单
 let menuEl = null;
 
@@ -1371,8 +1375,14 @@ function buildMarkBar() {
             <button class="fbm-btn fbm-clear" data-act="clear">清除</button>
         </div>`;
 
-    // 按住浮条不能把选区清掉，否则桌面端点按钮的瞬间选区就没了
-    el.addEventListener('mousedown', e => e.preventDefault());
+    // 按住浮条不能把选区清掉，否则桌面端点按钮的瞬间选区就没了。
+    // 手机上点按钮还会让选区先塌陷，那一下的 selectionchange 必须挡掉，
+    // 不然 click 落到按钮上时 markSel 已经被清空。
+    el.addEventListener('mousedown', e => {
+        selGuardUntil = Date.now() + 1000;
+        e.preventDefault();
+    });
+    el.addEventListener('touchstart', () => { selGuardUntil = Date.now() + 1000; }, { passive: true });
     el.addEventListener('click', e => {
         const btn = e.target.closest('.fbm-btn');
         if (!btn) return;
@@ -1389,21 +1399,60 @@ function showMarkBar() {
     markBarEl.classList.add('fbm-show');
 
     const { rect } = markSel;
+
+    // 手机上双指缩放后，fixed 定位算的是版式视口，而 rect 是视觉视口坐标，
+    // 两者能差出整屏。有 visualViewport 就以它为边界。
+    const vv = window.visualViewport;
+    const vx = vv ? vv.offsetLeft : 0;
+    const vy = vv ? vv.offsetTop : 0;
+    const vw = vv ? vv.width : window.innerWidth;
+    const vh = vv ? vv.height : window.innerHeight;
+
+    // 触屏设备松手后，系统会在选区旁边弹出自己的菜单（复制/全选/朗读…），
+    // 浮条跟着选区走必然和它重叠，所以触屏改成贴边停靠，离选区越远越好。
+    // 带触屏的笔记本一般同时有 hover 且宽度大，仍然按桌面处理。
+    const mq = window.matchMedia;
+    const coarse = !!mq && mq('(any-pointer: coarse)').matches;
+    const hover = !!mq && mq('(hover: hover)').matches;
+    const dock = coarse && (!hover || vw <= 1100);
+    markBarEl.classList.toggle('fbm-dock', dock);
+
     const bw = markBarEl.offsetWidth;
     const bh = markBarEl.offsetHeight;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
 
-    let left = rect.left + rect.width / 2 - bw / 2;
-    left = Math.max(8, Math.min(left, vw - bw - 8));
+    // 停靠时已和选区脱钩，就按屏幕居中；桌面才跟着选区走
+    let left = dock
+        ? vx + (vw - bw) / 2
+        : rect.left + rect.width / 2 - bw / 2;
+    left = Math.max(vx + 8, Math.min(left, vx + vw - bw - 8));
 
-    // 上方放不下就翻到选区下方
-    let top = rect.top - bh - 10;
-    if (top < 8) top = rect.bottom + 10;
-    if (top + bh > vh - 8) top = Math.max(8, vh - bh - 8);
+    // 位置一律用 top 算死像素：手机上 bottom/env() 一旦被 WebKit 整条丢掉，
+    // top 又只剩 auto，浮条会退到文档末尾的静态位置，整块看不见。
+    let top;
+    if (dock) {
+        // 停在弹窗内侧底边，别贴屏幕底边（那里可能是酒馆自己的输入栏），
+        // 也离系统选区菜单最远；选区正好压在这里就翻到弹窗内侧顶边。
+        const box = viewerEl?.querySelector('.fbv-box');
+        const boxRect = box ? box.getBoundingClientRect() : null;
+        const edgeBottom = boxRect ? boxRect.bottom : vy + vh;
+        const edgeTop = boxRect ? boxRect.top : vy;
+        top = edgeBottom - bh - 10;
+        if (rect.bottom > top - 8) top = edgeTop + 10;
+    } else {
+        // 桌面：跟着选区，上方放不下就翻到选区下方
+        top = rect.top - bh - 10;
+        if (top < vy + 8) top = rect.bottom + 10;
+    }
+    top = Math.max(vy + 8, Math.min(top, vy + vh - bh - 8));
+
+    if (!Number.isFinite(left) || !Number.isFinite(top)) {
+        left = vx + 8;
+        top = vy + 8;
+    }
 
     markBarEl.style.left = `${Math.round(left)}px`;
     markBarEl.style.top = `${Math.round(top)}px`;
+    markBarEl.style.bottom = 'auto';
 }
 
 function hideMarkBar() {
@@ -1411,11 +1460,17 @@ function hideMarkBar() {
     markSel = null;
 }
 
-function bindMarkHandlers() {
-    const body = viewerEl.querySelector('.fbv-body');
-    if (!markBarEl) markBarEl = buildMarkBar();
-
-    const settle = () => {
+/**
+ * 真正决定浮条出不出的地方。
+ * 手机上长按选字时，iOS 会直接把这次触摸判成 touchcancel，Android 的
+ * touchend 也常常早于选区生成，所以不能靠触摸事件，只能靠 document 的
+ * selectionchange + 短防抖，等选区停下来再读。
+ */
+function onSelectionChange() {
+    if (Date.now() < selGuardUntil) return;
+    clearTimeout(selTimer);
+    selTimer = setTimeout(() => {
+        if (Date.now() < selGuardUntil) return;   // 防抖期间手指落到浮条上了
         const picked = readMarkSelection();
         if (!picked) {
             hideMarkBar();
@@ -1423,14 +1478,29 @@ function bindMarkHandlers() {
         }
         markSel = picked;
         showMarkBar();
-    };
+    }, 120);
+}
 
-    body.addEventListener('mouseup', settle);
-    // 移动端长按选词不走 mouseup，得单独接 touchend，并留一点时间让选区定型
-    body.addEventListener('touchend', () => setTimeout(settle, 30));
-    // 重新在正文里按下 = 放弃上一次选区
-    body.addEventListener('mousedown', hideMarkBar);
-    body.addEventListener('scroll', hideMarkBar);
+function bindMarkHandlers() {
+    const body = viewerEl.querySelector('.fbv-body');
+    if (!markBarEl) markBarEl = buildMarkBar();
+
+    body.addEventListener('mouseup', onSelectionChange);
+    body.addEventListener('touchend', onSelectionChange);
+    body.addEventListener('touchcancel', onSelectionChange);
+    document.addEventListener('selectionchange', onSelectionChange);
+
+    // 重新在正文里按下 = 放弃上一次选区。
+    // 但手机长按选字后，部分 WebView 会补一个合成 mousedown，那一下不能把
+    // 刚落地的选区关掉；真有选区塌陷，selectionchange 会负责关。
+    body.addEventListener('mousedown', () => {
+        if (markBarEl?.classList.contains('fbm-show')) return;
+        hideMarkBar();
+    });
+    // 滚动时选区会跟着动，重新算一次位置；选区真没了这里自然会关掉浮条
+    body.addEventListener('scroll', () => {
+        if (markBarEl?.classList.contains('fbm-show')) onSelectionChange();
+    }, { passive: true });
 }
 
 /**

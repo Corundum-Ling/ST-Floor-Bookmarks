@@ -685,6 +685,14 @@
 
 #fb-markbar.fbm-show { display: flex; }
 
+/* 触屏：浮条停靠在弹窗内侧的底/顶边，避开系统自己的选区菜单，压的是正文所以要更深一点 */
+#fb-markbar.fbm-dock {
+    z-index: 30210;
+    padding: 7px;
+    background: var(--SmartThemeBlurTintColor, #1a1a1a);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .65);
+}
+
 .fbm-row {
     display: flex;
     align-items: center;
