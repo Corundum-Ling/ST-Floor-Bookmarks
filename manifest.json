@@ -6,9 +6,9 @@
   "js": "index.js",
   "css": "style.css",
   "author": "CorunLing",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "homePage": "",
   "auto_update": true,
   "github_url": "https://github.com/Corundum-Ling/ST-Floor-Bookmarks",
-  "description": "收藏指定楼层的聊天记录，支持回看、跳转、导出，可给收藏添加标题与分类标签。"
+  "description": "收藏指定楼层的聊天记录，支持回看、跳转、导出、复制，可给收藏添加标题与分类标签，并可在正文中划重点。"
 }

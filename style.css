@@ -340,6 +340,7 @@
 .fb-del:hover { color: #e57373; }
 .fb-view:hover { color: #8ab4f8; }
 .fb-export:hover { color: #81c784; }
+.fb-copy:hover { color: #4dd0e1; }
 .fb-goto:hover { color: #f5c542; }
 .fb-edit:hover { color: #ce93d8; }
 
@@ -640,4 +641,143 @@
     /* 移动端标注：查看器尺寸由 JS 的 placeViewer() 统一算，
        这里只调整内边距和字号 */
     .fbv-body { padding: 12px; font-size: 15px; }
+}
+
+/* ══════ 划重点 ══════ */
+
+/* 配色集中在这里，正文标注和浮条色块共用一套变量 */
+#fb-viewer,
+#fb-markbar {
+    --fb-h-y: rgba(255, 214, 79, .45);
+    --fb-h-g: rgba(129, 199, 132, .45);
+    --fb-h-b: rgba(100, 181, 246, .42);
+    --fb-h-p: rgba(244, 143, 177, .45);
+    --fb-f-r: #ff8a80;
+    --fb-f-o: #ffb74d;
+    --fb-f-b: #82b1ff;
+    --fb-f-g: #a5d6a7;
+}
+
+.fb-mark {
+    /* 一行高亮被折行时，每一段都画出圆角而不是只有首尾 */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    border-radius: 2px;
+}
+
+/* ── 选区浮条 ── */
+#fb-markbar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 30200;          /* 必须压在查看器(30100)上面 */
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 9px;
+    background: var(--SmartThemeBlurTintColor, #1e1e1e);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, .5);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#fb-markbar.fbm-show { display: flex; }
+
+.fbm-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.fbm-btn {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, .18);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--SmartThemeBodyColor, #ddd);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.fbm-btn:hover {
+    border-color: rgba(255, 255, 255, .55);
+}
+
+.fbm-sep {
+    width: 1px;
+    height: 16px;
+    margin: 0 2px;
+    background: rgba(255, 255, 255, .22);
+}
+
+.fbm-clear {
+    width: auto;
+    padding: 0 8px;
+    font-size: 11px;
+    color: #e57373;
+}
+
+.fbm-clear:hover { color: #ff8a80; }
+
+/* 颜色规则放在 .fbm-btn 之后 —— 同优先级下后写的胜出，
+   浮条上的色块才能盖掉 .fbm-btn 的透明背景 */
+.fb-h-y { background-color: var(--fb-h-y); }
+.fb-h-g { background-color: var(--fb-h-g); }
+.fb-h-b { background-color: var(--fb-h-b); }
+.fb-h-p { background-color: var(--fb-h-p); }
+
+.fb-f-r { color: var(--fb-f-r); }
+.fb-f-o { color: var(--fb-f-o); }
+.fb-f-b { color: var(--fb-f-b); }
+.fb-f-g { color: var(--fb-f-g); }
+
+.fb-u-s {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.fb-u-w {
+    text-decoration: underline wavy;
+    text-underline-offset: 3px;
+}
+
+/* ── 复制格式菜单 ── */
+#fb-menu {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 30300;
+    min-width: 160px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor, #1e1e1e);
+    border: 1px solid var(--SmartThemeBorderColor, #444);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .55);
+}
+
+.fbmn-item {
+    padding: 7px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.fbmn-item:hover { background: rgba(255, 255, 255, .1); }
+
+.fbmn-label {
+    font-size: 13px;
+    color: var(--SmartThemeBodyColor, #ddd);
+}
+
+.fbmn-hint {
+    margin-top: 1px;
+    font-size: 11px;
+    opacity: .55;
 }

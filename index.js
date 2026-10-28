@@ -30,6 +30,24 @@ const MAX_TITLE_LEN = 60;
 const MAX_TAGS = 5;
 const MAX_TAG_LEN = 20;
 
+// 划重点的样式表。键名会写进 fb-<id>.json 的 marks[].k，改键名要兼容旧数据。
+// 首字母是「族」：h 底色 / f 字色 / u 线型。同族互斥 —— 一段文字同族只能有一种样式。
+const MARK_KINDS = {
+    'h-y': { cls: 'fb-h-y', label: '黄底' },
+    'h-g': { cls: 'fb-h-g', label: '绿底' },
+    'h-b': { cls: 'fb-h-b', label: '蓝底' },
+    'h-p': { cls: 'fb-h-p', label: '粉底' },
+    'f-r': { cls: 'fb-f-r', label: '红字' },
+    'f-o': { cls: 'fb-f-o', label: '橙字' },
+    'f-b': { cls: 'fb-f-b', label: '蓝字' },
+    'f-g': { cls: 'fb-f-g', label: '绿字' },
+    'u-s': { cls: 'fb-u-s', label: '下划线' },
+    'u-w': { cls: 'fb-u-w', label: '波浪线' },
+};
+const MARK_FAMILIES = ['h', 'f', 'u'];
+// 套层顺序（内 → 外）：线型贴文字，字色居中，底色在最外层
+const MARK_WRAP_ORDER = ['u-s', 'u-w', 'f-r', 'f-o', 'f-b', 'f-g', 'h-y', 'h-g', 'h-b', 'h-p'];
+
 const CTX_WAIT_MS = 200;
 const CTX_TIMEOUT_MS = 30000;
 
@@ -951,6 +969,7 @@ function renderPanel() {
                     </div>
                     <div class="fb-acts">
                         <i class="fa-solid fa-pen fb-edit" title="编辑标题与标签"></i>
+                        <i class="fa-solid fa-copy fb-copy" title="复制正文"></i>
                         <i class="fa-solid fa-file-arrow-down fb-export" title="导出为 Markdown"></i>
                         <i class="fa-solid fa-eye fb-view" title="查看完整消息"></i>
                         <i class="fa-solid fa-arrow-right-to-bracket fb-goto" title="跳转到该层"></i>
@@ -991,6 +1010,10 @@ function renderPanel() {
             e.stopPropagation();
             exportOne(id);
         });
+        el.querySelector('.fb-copy')?.addEventListener('click', e => {
+            e.stopPropagation();
+            copyOne(id, e.currentTarget);
+        });
         el.querySelector('.fb-del')?.addEventListener('click', e => {
             e.stopPropagation();
             removeItem(id);
@@ -1018,6 +1041,15 @@ function formatTime(ts) {
 // ── 查看完整消息 ──────────────────────────────────
 
 let viewerEl = null;
+// 查看器当前打开的完整收藏（含 html / marks），划重点要读它也要写回它
+let viewerFull = null;
+// 每条收藏的正文缺失时用来兜底显示的预览文本
+let viewerEmptyText = '';
+// 划重点浮条与当前选区（offsets 以 .fbv-body 的 textContent 为基准）
+let markBarEl = null;
+let markSel = null;
+// 复制格式选择菜单
+let menuEl = null;
 
 /**
  * 打开「查看完整消息」弹窗，同时也是标题/标签的编辑场所。
@@ -1068,10 +1100,15 @@ async function viewFull(id, focusEdit = false) {
         viewerEl.querySelector('.fbv-close').addEventListener('click', closeViewer);
         viewerEl.querySelector('.fbv-mask').addEventListener('click', closeViewer);
         bindEditHandlers();
+        bindMarkHandlers();
     }
 
     // ── 每次打开都要按当前条目重置编辑状态 ──
     editCtx = { id, tags: [...(meta.tags || [])] };
+    viewerFull = full;
+    viewerEmptyText = meta.preview || '(内容为空)';
+    markSel = null;
+    hideMarkBar();
     viewerEl.querySelector('.fbv-title-in').value = meta.title || '';
     renderEditTags();
 
@@ -1082,9 +1119,8 @@ async function viewFull(id, focusEdit = false) {
          ${Number(meta.swipeId) > 0 ? ` · 版本${Number(meta.swipeId) + 1}` : ''}
          ${meta.ts ? ` · 收藏于 ${formatTime(meta.ts)}` : ''}`;
 
-    // 快照是存下来的 HTML（captureFloor 已 DOMPurify 清洗过）
-    viewerEl.querySelector('.fbv-body').innerHTML =
-        full?.html || `<div class="fb-empty">${escapeHtml(meta.preview || '(内容为空)')}</div>`;
+    // 快照是存下来的 HTML（captureFloor 已 DOMPurify 清洗过），划重点在此之上叠加
+    renderViewerBody(false);
 
     viewerEl.classList.add('fbv-show');
     placeViewer();          // 显示后立刻算一次真实尺寸
@@ -1220,6 +1256,236 @@ function bindEditHandlers() {
     });
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  划重点：正文内的标注
+// ═══════════════════════════════════════════════════════════════
+//
+// 标注存的是「字符偏移」而不是直接写进 HTML 的标签，理由有两条：
+//   - 包 span 不改变 textContent，偏移永远对得上，反复标注不会漂
+//   - 快照 HTML 保持原样，不会越标越套娃（往 HTML 里塞标签，标几次就套几层）
+// 量偏移和画标注必须用同一套字符序：这里统一以 .fbv-body 的 textContent 为准。
+
+/** 从 body 开头到 (container, offset) 之间有多少个字符 */
+function offsetInBody(body, container, offset) {
+    const r = document.createRange();
+    r.selectNodeContents(body);
+    r.setEnd(container, offset);
+    return r.toString().length;
+}
+
+/** 按「快照 HTML + marks」重画正文，并尽量保住滚动位置 */
+function renderViewerBody(keepScroll = true) {
+    const body = viewerEl?.querySelector('.fbv-body');
+    if (!body) return;
+    const top = keepScroll ? body.scrollTop : 0;
+    body.innerHTML = viewerFull?.html
+        || `<div class="fb-empty">${escapeHtml(viewerEmptyText || '(内容为空)')}</div>`;
+    applyMarks(body, viewerFull?.marks);
+    body.scrollTop = top;
+}
+
+/**
+ * 把标注画到正文上。
+ * 区间可以互相重叠（比如黄底 0-10 再叠红字 5-15），所以先按所有边界把文本切成段，
+ * 每一段再套上盖住它的那几层。切段前先把文本节点和它们的全局区间收全，
+ * 不能边改 DOM 边算偏移 —— 换成多个节点后序号就对不上了。
+ */
+function applyMarks(body, marks) {
+    const list = (marks || []).filter(m =>
+        m && Number.isFinite(m.s) && Number.isFinite(m.e) && m.e > m.s && MARK_KINDS[m.k]);
+    if (list.length === 0) return;
+
+    const nodes = [];
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    let pos = 0;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        nodes.push({ node: n, start: pos, end: pos + n.data.length });
+        pos += n.data.length;
+    }
+
+    for (const item of nodes) {
+        if (item.end <= item.start) continue;
+
+        // 这个文本节点要切在哪些位置
+        const cuts = new Set([item.start, item.end]);
+        for (const m of list) {
+            if (m.s > item.start && m.s < item.end) cuts.add(m.s);
+            if (m.e > item.start && m.e < item.end) cuts.add(m.e);
+        }
+        const points = [...cuts].sort((a, b) => a - b);
+        // 没有任何标注盖住整个节点 → 原样留着
+        if (points.length === 2 && !list.some(m => m.s <= item.start && m.e >= item.end)) continue;
+
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < points.length - 1; i += 1) {
+            const a = points[i];
+            const b = points[i + 1];
+            let piece = document.createTextNode(item.node.data.slice(a - item.start, b - item.start));
+            list
+                .filter(m => m.s <= a && m.e >= b)
+                .sort((x, y) => MARK_WRAP_ORDER.indexOf(x.k) - MARK_WRAP_ORDER.indexOf(y.k))
+                .forEach(m => {
+                    const layer = document.createElement('span');
+                    layer.className = `fb-mark ${MARK_KINDS[m.k].cls}`;
+                    layer.setAttribute('data-fb-mark', '');
+                    layer.appendChild(piece);
+                    piece = layer;
+                });
+            frag.appendChild(piece);
+        }
+        item.node.replaceWith(frag);
+    }
+}
+
+/** 读当前选区，换算成相对正文的偏移；不在正文里或没有选区时返回 null */
+function readMarkSelection() {
+    const body = viewerEl?.querySelector('.fbv-body');
+    const sel = window.getSelection();
+    if (!body || !sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+
+    const range = sel.getRangeAt(0);
+    if (!body.contains(range.startContainer) || !body.contains(range.endContainer)) return null;
+
+    const s = offsetInBody(body, range.startContainer, range.startOffset);
+    const e = offsetInBody(body, range.endContainer, range.endOffset);
+    if (e <= s) return null;
+    return { s, e, rect: range.getBoundingClientRect() };
+}
+
+/** 组装选区浮条：上行底色 + 字色，下行线型 + 清除 */
+function buildMarkBar() {
+    const swatch = (k, inner) =>
+        `<button class="fbm-btn ${MARK_KINDS[k].cls}" data-k="${k}" title="${MARK_KINDS[k].label}">${inner}</button>`;
+
+    const el = document.createElement('div');
+    el.id = 'fb-markbar';
+    el.innerHTML = `
+        <div class="fbm-row">
+            ${['h-y', 'h-g', 'h-b', 'h-p'].map(k => swatch(k, '')).join('')}
+            <span class="fbm-sep"></span>
+            ${['f-r', 'f-o', 'f-b', 'f-g'].map(k => swatch(k, 'A')).join('')}
+        </div>
+        <div class="fbm-row">
+            ${['u-s', 'u-w'].map(k => swatch(k, 'U')).join('')}
+            <span class="fbm-sep"></span>
+            <button class="fbm-btn fbm-clear" data-act="clear">清除</button>
+        </div>`;
+
+    // 按住浮条不能把选区清掉，否则桌面端点按钮的瞬间选区就没了
+    el.addEventListener('mousedown', e => e.preventDefault());
+    el.addEventListener('click', e => {
+        const btn = e.target.closest('.fbm-btn');
+        if (!btn) return;
+        if (btn.dataset.act === 'clear') clearMarks();
+        else applyMarkKind(btn.dataset.k);
+    });
+
+    document.body.appendChild(el);
+    return el;
+}
+
+function showMarkBar() {
+    if (!markBarEl || !markSel?.rect) return;
+    markBarEl.classList.add('fbm-show');
+
+    const { rect } = markSel;
+    const bw = markBarEl.offsetWidth;
+    const bh = markBarEl.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = rect.left + rect.width / 2 - bw / 2;
+    left = Math.max(8, Math.min(left, vw - bw - 8));
+
+    // 上方放不下就翻到选区下方
+    let top = rect.top - bh - 10;
+    if (top < 8) top = rect.bottom + 10;
+    if (top + bh > vh - 8) top = Math.max(8, vh - bh - 8);
+
+    markBarEl.style.left = `${Math.round(left)}px`;
+    markBarEl.style.top = `${Math.round(top)}px`;
+}
+
+function hideMarkBar() {
+    markBarEl?.classList.remove('fbm-show');
+    markSel = null;
+}
+
+function bindMarkHandlers() {
+    const body = viewerEl.querySelector('.fbv-body');
+    if (!markBarEl) markBarEl = buildMarkBar();
+
+    const settle = () => {
+        const picked = readMarkSelection();
+        if (!picked) {
+            hideMarkBar();
+            return;
+        }
+        markSel = picked;
+        showMarkBar();
+    };
+
+    body.addEventListener('mouseup', settle);
+    // 移动端长按选词不走 mouseup，得单独接 touchend，并留一点时间让选区定型
+    body.addEventListener('touchend', () => setTimeout(settle, 30));
+    // 重新在正文里按下 = 放弃上一次选区
+    body.addEventListener('mousedown', hideMarkBar);
+    body.addEventListener('scroll', hideMarkBar);
+}
+
+/**
+ * 把某一族样式在 [s, e) 上设成 kind（kind 为 null 即清掉这一段）。
+ * 同族里一段位置只能有一种样式，所以与选区相交的旧标注要被裁短或拆成两段。
+ */
+function setFamily(marks, fam, s, e, kind) {
+    const out = [];
+    for (const m of marks) {
+        if (String(m.k)[0] !== fam) { out.push(m); continue; }  // 别的族不动
+        if (m.e <= s || m.s >= e) { out.push(m); continue; }     // 和选区不相交
+        if (m.s < s) out.push({ s: m.s, e: s, k: m.k });         // 左侧残段
+        if (m.e > e) out.push({ s: e, e: m.e, k: m.k });         // 右侧残段
+    }
+    if (kind) out.push({ s, e, k: kind });
+    return out;
+}
+
+function applyMarkKind(k) {
+    if (!markSel || !viewerFull || !MARK_KINDS[k]) return;
+    const { s, e } = markSel;
+    const marks = viewerFull.marks || [];
+    // 整段都已经是这个样式 → 再点一次当取消
+    const covered = marks.some(m => m.k === k && m.s <= s && m.e >= e);
+    commitMarks(setFamily(marks, k[0], s, e, covered ? null : k));
+}
+
+function clearMarks() {
+    if (!markSel || !viewerFull) return;
+    const { s, e } = markSel;
+    let next = viewerFull.marks || [];
+    for (const fam of MARK_FAMILIES) next = setFamily(next, fam, s, e, null);
+    commitMarks(next);
+}
+
+async function commitMarks(marks) {
+    if (!editCtx || !viewerFull) return;
+    viewerFull.marks = marks;
+    renderViewerBody();
+    hideMarkBar();
+    window.getSelection()?.removeAllRanges?.();
+    await saveMarks(editCtx.id, marks);
+}
+
+/** 标注跟着正文存在同一条 fb-<id>.json 里，不占索引 */
+async function saveMarks(id, marks) {
+    if (!viewerFull) return;
+    try {
+        await enqueue(() => uploadJson(fileOf(id), { ...viewerFull, marks }));
+    } catch (e) {
+        console.error(`[${PLUGIN}]`, e);
+        toastr?.error?.(`标注保存失败: ${e.message}`);
+    }
+}
+
 /**
  * 用像素坐标布置查看器。
  *
@@ -1266,7 +1532,9 @@ function placeViewer() {
 }
 
 function closeViewer() {
+    hideMarkBar();
     viewerEl?.classList.remove('fbv-show');
+    viewerFull = null;
     editCtx = null;
 }
 
@@ -1354,6 +1622,22 @@ function htmlToMarkdown(html) {
     // <br> → 换行
     box.content.querySelectorAll('br').forEach(n => n.replaceWith('\n'));
 
+    // 行内样式 → Markdown 标记。先处理内层（em）再处理外层（strong），
+    // 这样 <strong><em>x</em></strong> 得到 ***x*** 而不是把斜体丢掉。
+    // 文本为空就跳过 —— 消息里的 <i class="fa-..."> 是图标，不能变成空标记。
+    box.content.querySelectorAll('em, i').forEach(n => {
+        const t = n.textContent || '';
+        if (t.trim()) n.replaceWith(`*${t}*`);
+    });
+    box.content.querySelectorAll('strong, b').forEach(n => {
+        const t = n.textContent || '';
+        if (t.trim()) n.replaceWith(`**${t}**`);
+    });
+    box.content.querySelectorAll('code').forEach(n => {
+        const t = n.textContent || '';
+        if (t) n.replaceWith(`\`${t}\``);
+    });
+
     // 块级元素 → 前后加换行，避免文字粘成一段
     box.content.querySelectorAll('p, div, li, blockquote, h1, h2, h3, h4, h5, h6')
         .forEach(n => n.append('\n'));
@@ -1394,6 +1678,146 @@ function downloadBlob(text, filename) {
         URL.revokeObjectURL(url);
     }, 1000);
 }
+
+// ── 单条复制 ──────────────────────────────────────
+
+/**
+ * 写剪贴板。
+ * 不能只靠 navigator.clipboard：它只在安全上下文（https 或 localhost）存在，
+ * 而本插件的常见用法是局域网 http://192.168.x.x:8000 —— 那里它直接是 undefined。
+ * 所以必须留 textarea + execCommand 这条老路。
+ */
+async function copyToClipboard(text) {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch {
+        // 权限被拒之类，落到下面的兜底
+    }
+
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+
+    let ok = false;
+    try {
+        ok = document.execCommand('copy');
+    } catch {
+        ok = false;
+    }
+    ta.remove();
+    return ok;
+}
+
+/** 面板上的「复制」：点一下先选格式 */
+function copyOne(id, anchor) {
+    showMenu(anchor, [
+        { label: '复制 Markdown', hint: '保留段落与图片', run: () => runCopy(id, 'md') },
+        { label: '复制纯文本', hint: '去掉图片，只留文字', run: () => runCopy(id, 'txt') },
+    ]);
+}
+
+async function runCopy(id, fmt) {
+    let full = null;
+    try {
+        const r = await readJson(fileOf(id));
+        full = r.missing ? null : r.value;
+    } catch (e) {
+        toastr?.error?.(`复制失败，读取收藏出错: ${e.message}`);
+        return;
+    }
+
+    const html = full?.html || '';
+    const text = fmt === 'md' ? htmlToMarkdown(html) : plainTextOf(html);
+    if (!text) {
+        toastr?.warning?.('这条收藏没有正文');
+        return;
+    }
+
+    if (await copyToClipboard(text)) {
+        toastr?.success?.(fmt === 'md' ? '已复制 Markdown' : '已复制纯文本');
+    } else {
+        toastr?.error?.('复制失败：浏览器拒绝了剪贴板写入');
+    }
+}
+
+/** 纯文本版：在 Markdown 的基础上把图片语法压成 alt */
+function plainTextOf(html) {
+    return htmlToMarkdown(html).replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
+}
+
+// ── 轻量弹出菜单（选复制格式用）───────────────────
+
+function showMenu(anchor, entries) {
+    hideMenu();
+    if (!anchor) return;
+
+    const el = document.createElement('div');
+    el.id = 'fb-menu';
+    el.innerHTML = entries.map((it, i) => `
+        <div class="fbmn-item" data-i="${i}">
+            <div class="fbmn-label">${escapeHtml(it.label)}</div>
+            ${it.hint ? `<div class="fbmn-hint">${escapeHtml(it.hint)}</div>` : ''}
+        </div>`).join('');
+    document.body.appendChild(el);
+    menuEl = el;
+
+    el.addEventListener('mousedown', e => e.preventDefault());
+    el.addEventListener('click', e => {
+        const row = e.target.closest('.fbmn-item');
+        if (!row) return;
+        const entry = entries[Number(row.dataset.i)];
+        hideMenu();
+        entry?.run?.();
+    });
+
+    // 贴着按钮放，出界就翻到上方并夹进视口
+    const r = anchor.getBoundingClientRect();
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = r.left + r.width / 2 - w / 2;
+    left = Math.max(8, Math.min(left, vw - w - 8));
+
+    let top = r.bottom + 6;
+    if (top + h > vh - 8) top = Math.max(8, r.top - h - 6);
+
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+
+    // 推迟一轮再加监听，否则打开它的这次点击会立刻把自己关掉
+    setTimeout(() => {
+        document.addEventListener('mousedown', onMenuOutside, true);
+        document.addEventListener('keydown', onMenuEsc, true);
+        window.addEventListener('scroll', hideMenu, true);
+    }, 0);
+}
+
+function onMenuOutside(e) {
+    if (!menuEl || menuEl.contains(e.target)) return;
+    hideMenu();
+}
+
+function onMenuEsc(e) {
+    if (e.key === 'Escape') hideMenu();
+}
+
+function hideMenu() {
+    document.removeEventListener('mousedown', onMenuOutside, true);
+    document.removeEventListener('keydown', onMenuEsc, true);
+    window.removeEventListener('scroll', hideMenu, true);
+    menuEl?.remove();
+    menuEl = null;
+}
+
 /** 跳转到收藏所在楼层（仅同聊天有效） */
 async function gotoFloor(id) {
     const item = indexCache?.items.find(i => i.id === id);
