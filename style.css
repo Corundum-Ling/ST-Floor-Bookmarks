@@ -242,6 +242,20 @@
     flex-shrink: 0;
 }
 
+/* 聊天头右侧的「切换到该聊天」 */
+.fb-chat-open {
+    flex-shrink: 0;
+    cursor: pointer;
+    opacity: .45;
+    padding: 2px 4px;          /* 手机上把点击区域撑开一点 */
+    transition: opacity .12s, color .12s;
+}
+
+.fb-chat-open:hover {
+    opacity: 1;
+    color: #8ab4f8;
+}
+
 /* ── 条目 ── */
 .fb-item {
     position: relative;

@@ -177,6 +177,8 @@ function normalizeIndex(raw) {
             chatIdHash: i.chatIdHash ?? null,
             chatName: String(i.chatName || ''),
             charName: String(i.charName || ''),
+            charId: i.charId === undefined || i.charId === null ? null : String(i.charId),
+            isGroup: !!i.isGroup,
             floor: Number(i.floor) || 0,
             swipeId: Number(i.swipeId) || 0,
             sender: String(i.sender || ''),
@@ -231,11 +233,15 @@ function currentChat() {
         ? (c.groups?.[c.groupId]?.name || '')
         : (c.name2 || c.characterName || c.characters?.[c.characterId]?.name || '');
     const chatId = c.chatId || '';
+    const rawCharId = c.characterId;
     return {
         chatId,
         chatIdHash: chatId ? strHash(chatId) : null,
         chatName: deriveChatName(chatId, charName),
         charName: charName || '未知角色',
+        // 只用来判断「是不是同一张角色卡」，切换聊天要靠它兜底校验
+        charId: isGroup || rawCharId === undefined || rawCharId === null ? null : String(rawCharId),
+        isGroup,
     };
 }
 
@@ -406,6 +412,8 @@ async function toggleBookmark(mesid, btn) {
                 chatIdHash: chat.chatIdHash,
                 chatName: chat.chatName,
                 charName: chat.charName,
+                charId: chat.charId,
+                isGroup: chat.isGroup,
                 floor: mesid,
                 swipeId: snap.swipeId,
                 sender: snap.sender,
@@ -846,15 +854,23 @@ function debounce(fn, ms) {
  * 按「角色卡 → 聊天」两级筛选。
  * 返回按角色卡分组后的结构，供渲染使用。
  */
-function groupItems(items) {
+/**
+ * 角色卡 → 聊天 两级分组。
+ *
+ * 排序规则（v1.3.0 起）：当前角色卡置顶，其余按收藏数降序；组内当前聊天
+ * 置顶，其余按最近收藏时间降序。分支聊天（`- Branch #N`）名字高度相似，
+ * 把人现在待着的地方顶到最上面，才不用在一堆近似名字里找。
+ */
+function groupItems(items, cur) {
     const byChar = new Map();
 
     for (const it of items) {
         const charKey = String(it.charName || '未知角色');
         if (!byChar.has(charKey)) {
-            byChar.set(charKey, { charName: charKey, chats: new Map(), total: 0 });
+            byChar.set(charKey, { charName: charKey, charId: it.charId || null, chats: new Map(), total: 0 });
         }
         const g = byChar.get(charKey);
+        if (!g.charId && it.charId) g.charId = it.charId;
         const chatKey = String(it.chatId || '');
         if (!g.chats.has(chatKey)) {
             g.chats.set(chatKey, { chatId: chatKey, chatName: it.chatName || '未命名聊天', items: [] });
@@ -863,14 +879,29 @@ function groupItems(items) {
         g.total++;
     }
 
+    const lastTs = c => Math.max(...c.items.map(i => i.ts || 0));
+    const isCurChat = c => !!cur?.chatId && String(c.chatId) === String(cur.chatId);
+    // 旧收藏没有 charId，只能退回名字比较
+    const isCurChar = g => {
+        if (!cur) return false;
+        if (cur.charId && g.charId) return String(cur.charId) === String(g.charId);
+        return String(cur.charName) === String(g.charName);
+    };
+
     return [...byChar.values()].map(g => ({
         ...g,
         chats: [...g.chats.values()].sort((a, b) => {
-            const at = Math.max(...a.items.map(i => i.ts || 0));
-            const bt = Math.max(...b.items.map(i => i.ts || 0));
-            return bt - at;
+            const ca = isCurChat(a) ? 1 : 0;
+            const cb = isCurChat(b) ? 1 : 0;
+            if (ca !== cb) return cb - ca;
+            return lastTs(b) - lastTs(a);
         }),
-    })).sort((a, b) => b.total - a.total);
+    })).sort((a, b) => {
+        const ca = isCurChar(a) ? 1 : 0;
+        const cb = isCurChar(b) ? 1 : 0;
+        if (ca !== cb) return cb - ca;
+        return b.total - a.total;
+    });
 }
 
 function visibleItems() {
@@ -924,7 +955,7 @@ function renderPanel() {
     }
 
     const cur = currentChat();
-    const groups = groupItems(items);
+    const groups = groupItems(items, cur);
 
     let html = '';
     for (const g of groups) {
@@ -945,6 +976,7 @@ function renderPanel() {
                     <span class="fb-chname">${escapeHtml(ch.chatName)}</span>
                     ${isCur ? '<span class="fb-cur-tag">当前</span>' : ''}
                     <span class="fb-chcount">${ch.items.length}</span>
+                    ${isCur ? '' : `<i class="fa-solid fa-arrow-right-to-bracket fb-chat-open" data-chat="${escapeHtml(ch.chatId)}" title="切换到该聊天"></i>`}
                 </div>`;
 
             for (const i of ch.items.slice().sort((a, b) => (a.floor - b.floor))) {
@@ -988,6 +1020,24 @@ function renderPanel() {
     list.querySelectorAll('.fb-group-head').forEach(h => {
         h.addEventListener('click', () => {
             h.closest('.fb-group').classList.toggle('fb-gcollapsed');
+        });
+    });
+
+    // 聊天头右侧的「切换到该聊天」（只切聊天，不跳层）
+    list.querySelectorAll('.fb-chat-open').forEach(btn => {
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            const chatId = btn.dataset.chat;
+            const item = (indexCache?.items || []).find(i => String(i.chatId) === String(chatId));
+            if (!item) return;
+            const sw = await switchChat(item);
+            if (!sw.ok) {
+                toastr?.warning?.(sw.reason);
+                return;
+            }
+            refreshStars();
+            renderPanel();
+            toastr?.info?.(`已切到「${item.chatName}」`);
         });
     });
 
@@ -1889,13 +1939,89 @@ function hideMenu() {
 }
 
 /** 跳转到收藏所在楼层（仅同聊天有效） */
+/**
+ * 切到收藏所属的聊天。
+ *
+ * ST 的聊天分支（`- Branch #N`）是同一张角色卡下的独立聊天文件，切换只需要
+ * `openCharacterChat(文件名)`。跨角色卡要连角色卡一起换，整个界面会重建，
+ * 那属于另一个量级的改动，这里明确拒绝并提示。
+ *
+ * 群聊用的是另一套（`openGroupChat`），本插件不处理。
+ */
+async function switchChat(item) {
+    const c = ctx();
+    const chat = currentChat();
+    if (!c || !item?.chatId) return { ok: false, reason: '找不到这条收藏所属的聊天' };
+    if (String(item.chatId) === String(chat?.chatId)) return { ok: true };
+
+    if (item.isGroup || chat?.isGroup) {
+        return { ok: false, reason: '群聊的收藏暂不支持前往' };
+    }
+
+    // 旧收藏没有 charId，退回角色名比较
+    const sameChar = item.charId && chat?.charId
+        ? String(item.charId) === String(chat.charId)
+        : String(item.charName) === String(chat?.charName);
+    if (!sameChar) {
+        return { ok: false, reason: `该收藏属于「${item.charName}」，请先切到那张角色卡` };
+    }
+
+    if (typeof c.openCharacterChat !== 'function') {
+        return { ok: false, reason: '这个酒馆版本不支持自动切换聊天' };
+    }
+
+    // 聊天文件可能已被删除或改名，切失败就退回原来的聊天，别把人扔在空聊天里
+    const prevChatId = String(c.characters?.[c.characterId]?.chat || '');
+    try {
+        await c.openCharacterChat(item.chatId);
+    } catch (err) {
+        console.error('[FloorBookmarks] openCharacterChat 失败', err);
+        return { ok: false, reason: '切换聊天失败，聊天可能已被删除' };
+    }
+
+    if (await waitForChat(item.chatId)) return { ok: true };
+
+    if (prevChatId && prevChatId !== item.chatId) {
+        try {
+            await c.openCharacterChat(prevChatId);
+            await waitForChat(prevChatId, 4000);
+        } catch (err) {
+            console.error('[FloorBookmarks] 回滚聊天失败', err);
+        }
+    }
+    return { ok: false, reason: '聊天里没有消息，可能已被删除，已退回原来的聊天' };
+}
+
+/** 等聊天真正加载完（chatId 对上且消息列表已渲染） */
+function waitForChat(chatId, ms = 10000) {
+    return new Promise(resolve => {
+        const deadline = Date.now() + ms;
+        const tick = () => {
+            const c = ctx();
+            const loaded = String(c?.chatId || '') === String(chatId) && !!document.querySelector('#chat > .mes');
+            if (loaded) return resolve(true);
+            if (Date.now() >= deadline) return resolve(false);
+            setTimeout(tick, 120);
+        };
+        tick();
+    });
+}
+
 async function gotoFloor(id) {
     const item = indexCache?.items.find(i => i.id === id);
     if (!item) return;
+
     const chat = currentChat();
-    if (!chat?.chatId || String(item.chatId) !== String(chat.chatId)) {
-        toastr?.warning?.('该收藏属于其他聊天，请先切换到对应聊天');
-        return;
+    const same = !!chat?.chatId && String(item.chatId) === String(chat.chatId);
+    if (!same) {
+        const sw = await switchChat(item);
+        if (!sw.ok) {
+            toastr?.warning?.(sw.reason);
+            return;
+        }
+        // 聊天换了，「当前」标记和置顶顺序都得重算
+        refreshStars();
+        renderPanel();
     }
 
     toastr?.info?.(`正在定位第 ${Number(item.floor) + 1} 层…`, null, { timeOut: 1200 });
