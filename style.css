@@ -216,7 +216,15 @@
     padding: 4px 2px;
     font-size: 12px;
     opacity: .75;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: opacity .12s, background .12s;
 }
+
+.fb-chat-head:hover { opacity: 1; background: rgba(255, 255, 255, .06); }
+
+.fb-chat.fb-ccollapsed .fb-caret { transform: rotate(-90deg); }
+.fb-chat.fb-ccollapsed .fb-item { display: none; }
 
 .fb-chicon { font-size: 11px; opacity: .6; }
 

@@ -57,6 +57,10 @@ let indexCache = null;      // { version, items: [] }
 let writeQueue = Promise.resolve();
 let ctxReady = false;
 
+// 面板里被用户折叠起来的聊天（存 chatId）。只活在内存里：
+// 要解决的是「收藏多的时候翻不动」，重开面板恢复展开不算问题。
+const collapsedChats = new Set();
+
 // 查看器里正在编辑的条目：{ id, tags: [] }
 let editCtx = null;
 // 上一次渲染的「已有标签」列表，供点击时按下标取回（避免把中文塞进 data-*）
@@ -970,8 +974,10 @@ function renderPanel() {
 
         for (const ch of g.chats) {
             const isCur = cur?.chatId && String(ch.chatId) === String(cur.chatId);
-            html += `<div class="fb-chat${isCur ? ' fb-chat-cur' : ''}">
-                <div class="fb-chat-head">
+            const isCollapsed = collapsedChats.has(String(ch.chatId));
+            html += `<div class="fb-chat${isCur ? ' fb-chat-cur' : ''}${isCollapsed ? ' fb-ccollapsed' : ''}">
+                <div class="fb-chat-head" data-chat="${escapeHtml(ch.chatId)}" title="点击折叠/展开这个聊天">
+                    <i class="fa-solid fa-chevron-down fb-caret"></i>
                     <i class="fa-solid fa-comments fb-chicon"></i>
                     <span class="fb-chname">${escapeHtml(ch.chatName)}</span>
                     ${isCur ? '<span class="fb-cur-tag">当前</span>' : ''}
@@ -1020,6 +1026,22 @@ function renderPanel() {
     list.querySelectorAll('.fb-group-head').forEach(h => {
         h.addEventListener('click', () => {
             h.closest('.fb-group').classList.toggle('fb-gcollapsed');
+        });
+    });
+
+    // 聊天头折叠（点箭头以外的区域）
+    list.querySelectorAll('.fb-chat-head').forEach(h => {
+        h.addEventListener('click', e => {
+            if (e.target.closest('.fb-chat-open')) return;   // 箭头自己处理
+            const cid = h.dataset.chat;
+            const box = h.closest('.fb-chat');
+            if (collapsedChats.has(cid)) {
+                collapsedChats.delete(cid);
+                box.classList.remove('fb-ccollapsed');
+            } else {
+                collapsedChats.add(cid);
+                box.classList.add('fb-ccollapsed');
+            }
         });
     });
 
@@ -2007,6 +2029,56 @@ function waitForChat(chatId, ms = 10000) {
     });
 }
 
+/**
+ * 把某一层切到收藏时的 swipe 版本，让定位过去看到的就是当初收藏的那一版。
+ *
+ * ST 的 swipe 按钮只对「最后一层」开放（`isMessageSwipeable()` 里有
+ * `messageId == chat.length - 1` 这条），历史层在界面上根本切不了。
+ * 但 `swipe()` 在 `source === 'swipe_picker'` 时会跳过这批检查 —— ST 自己的
+ * 「Jump to Swipe」面板走的就是这个入口，所以这里调同一个，行为才算和官方一致。
+ */
+async function switchSwipe(mesid, swipeId) {
+    const m = ctx()?.chat?.[Number(mesid)];
+    const total = Array.isArray(m?.swipes) ? m.swipes.length : 0;
+    if (total < 2) return { ok: true };                  // 没有别的版本，无事可做
+
+    const clampId = v => Math.max(0, Math.min(Number(v) || 0, total - 1));
+    const want = clampId(swipeId);
+    const have = clampId(m.swipe_id);
+    if (want === have) return { ok: true };
+
+    try {
+        const st = await import('/script.js');
+        if (typeof st?.swipe !== 'function') {
+            return { ok: false, reason: '这个酒馆版本没法切换消息版本' };
+        }
+        // 老版本 swipe() 不认 forceSwipeId，会当成「划到下一版」进而触发重新生成。
+        // isMessageSwipeable 和 forceSwipeId 是同一次 swipe 重构里加的，用它当版本探针。
+        if (typeof st?.isMessageSwipeable !== 'function') {
+            return { ok: false, reason: '这个酒馆版本不支持跳到指定版本' };
+        }
+        // swipe_picker 这个 source 会跳过 ST 自己的「正在生成 / 正在切换 / 关了 swipe」检查，
+        // 跳过是有意的（历史层本来就不给切），但这几条还是得自己守住。
+        if (typeof st?.isSwipingAllowed === 'function' && !st.isSwipingAllowed()) {
+            return { ok: false, reason: '酒馆正在生成或正在切换，稍等一下再跳' };
+        }
+        await st.swipe(null, want > have ? 'right' : 'left', {
+            source: 'swipe_picker',
+            forceMesId: Number(mesid),
+            forceSwipeId: want,
+        });
+    } catch (e) {
+        return { ok: false, reason: `切换版本失败：${e?.message || e}` };
+    }
+
+    // swipe() 内部是异步渲染的，等 chat 里的 swipe_id 真的落定再走
+    for (let i = 0; i < 25; i++) {
+        if (Number(ctx()?.chat?.[Number(mesid)]?.swipe_id) === want) return { ok: true };
+        await new Promise(r => setTimeout(r, 80));
+    }
+    return { ok: false, reason: `第 ${Number(mesid) + 1} 层的版本 ${want + 1} 切不过去` };
+}
+
 async function gotoFloor(id) {
     const item = indexCache?.items.find(i => i.id === id);
     if (!item) return;
@@ -2032,9 +2104,14 @@ async function gotoFloor(id) {
         return;
     }
 
-    found.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    found.classList.add('fb-flash');
-    setTimeout(() => found.classList.remove('fb-flash'), 1400);
+    // 先切到这条收藏当初的 swipe 版本（切版本会重渲染该层，原来的节点可能被换掉）
+    const swiped = await switchSwipe(item.floor, item.swipeId);
+    if (!swiped.ok) toastr?.warning?.(swiped.reason);
+    const node = document.querySelector(`#chat > .mes[mesid="${Number(item.floor)}"]`) || found;
+
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    node.classList.add('fb-flash');
+    setTimeout(() => node.classList.remove('fb-flash'), 1400);
 }
 
 /**
