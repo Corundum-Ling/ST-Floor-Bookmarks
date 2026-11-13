@@ -1098,7 +1098,7 @@ function renderPanel() {
                     <div class="fb-acts">
                         <i class="fa-solid fa-pen fb-edit" title="编辑标题与标签"></i>
                         <i class="fa-solid fa-copy fb-copy" title="复制正文"></i>
-                        <i class="fa-solid fa-file-arrow-down fb-export" title="导出为 Markdown"></i>
+                        <i class="fa-solid fa-file-arrow-down fb-export" title="导出收藏"></i>
                         <i class="fa-solid fa-eye fb-view" title="查看完整消息"></i>
                         <i class="fa-solid fa-arrow-right-to-bracket fb-goto" title="跳转到该层"></i>
                         <i class="fa-solid fa-trash fb-del" title="删除这条收藏"></i>
@@ -1170,7 +1170,7 @@ function renderPanel() {
         });
         el.querySelector('.fb-export')?.addEventListener('click', e => {
             e.stopPropagation();
-            exportOne(id);
+            chooseExport(id, e.currentTarget);
         });
         el.querySelector('.fb-copy')?.addEventListener('click', e => {
             e.stopPropagation();
@@ -1775,6 +1775,38 @@ function closeViewer() {
 }
 
 // ── 单条导出 ──────────────────────────────────────
+
+function chooseExport(id, anchor) {
+    showMenu(anchor, [
+        { label: '导出 Markdown', hint: '保存文字与基础格式', run: () => exportOne(id) },
+        { label: '导出图片', hint: '预览排版与说明项，保存 PNG', run: () => exportImage(id) },
+    ]);
+}
+
+let imageExportRequest = 0;
+
+async function exportImage(id) {
+    const item = indexCache?.items.find(i => i.id === id);
+    if (!item) return;
+    const request = ++imageExportRequest;
+    const meta = JSON.parse(JSON.stringify(item));
+    toastr?.info?.('正在准备图片预览…', null, { timeOut: 1500 });
+    try {
+        const result = await readJson(fileOf(id));
+        if (request !== imageExportRequest) return;
+        if (result.missing || typeof result.value?.html !== 'string') {
+            throw new Error('收藏正文缺失，无法生成完整图片');
+        }
+        const full = JSON.parse(JSON.stringify(result.value));
+        const { openImageExport } = await import('./image-export.js');
+        if (request !== imageExportRequest) return;
+        await openImageExport({ meta, full, applyMarks, prepareImageSnapshot });
+    } catch (e) {
+        if (request !== imageExportRequest) return;
+        console.error(`[${PLUGIN}] 图片导出失败:`, e);
+        toastr?.error?.(`图片导出失败: ${e.message}`);
+    }
+}
 
 /**
  * 把一条收藏导出成 Markdown 并下载。

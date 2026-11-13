@@ -1,0 +1,44 @@
+/* Reuse the viewer's Tavern theme tokens and native form controls. */
+#fb-image-export{position:fixed;inset:0;z-index:30600;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:var(--SmartThemeBodyColor,#ddd);font-family:inherit;font-size:14px;line-height:1.5;padding:16px;box-sizing:border-box}
+#fb-image-export *{box-sizing:border-box}
+#fb-image-export .fbi-dialog{width:min(1120px,100%);height:min(920px,100%);max-height:100%;display:flex;flex-direction:column;background:var(--SmartThemeBlurTintColor,#1e1e1e);color:inherit;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:10px;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.6);backdrop-filter:blur(10px)}
+#fb-image-export .fbi-header{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--SmartThemeBorderColor,#444);gap:12px;flex-shrink:0}
+#fb-image-export h2{font-size:16px;margin:0;color:inherit}
+#fb-image-export button,#fb-image-export select,#fb-image-export input[type=number]{font:inherit;color:inherit;background:rgba(0,0,0,.22);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px 9px;min-height:34px;margin:0}
+#fb-image-export button{cursor:pointer;width:auto;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}
+#fb-image-export button:hover:not(:disabled){border-color:var(--SmartThemeQuoteColor,#8ab4f8)}
+#fb-image-export button:disabled{opacity:.45;cursor:default}
+#fb-image-export button:focus-visible,#fb-image-export select:focus-visible,#fb-image-export input:focus-visible,#fb-image-export summary:focus-visible{outline:2px solid var(--SmartThemeQuoteColor,#8ab4f8);outline-offset:2px}
+#fb-image-export .fbi-layout{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:0;flex:1}
+#fb-image-export .fbi-options{padding:14px;overflow:auto;border-right:1px solid var(--SmartThemeBorderColor,#444)}
+#fb-image-export fieldset{border:0;padding:0;margin:16px 0}
+#fb-image-export legend{font-weight:bold;margin-bottom:6px}
+#fb-image-export label{display:flex;align-items:center;gap:8px;margin:7px 0;cursor:pointer}
+#fb-image-export .fbi-mode{display:block}
+#fb-image-export select{width:100%;margin-top:5px}
+#fb-image-export .fbi-sizes>label{display:block;font-size:13px}
+#fb-image-export .fbi-size-control{display:grid;grid-template-columns:minmax(0,1fr) 80px;gap:8px;align-items:center}
+#fb-image-export input[type=number]{width:100%;min-width:0;padding:5px 7px}
+#fb-image-export input[type=range]{width:100%;min-width:0;margin:0;padding:8px 0;accent-color:var(--SmartThemeQuoteColor,#8ab4f8);cursor:pointer}
+#fb-image-export input[type=checkbox]{accent-color:var(--SmartThemeQuoteColor,#8ab4f8);flex:none;width:17px;height:17px;margin:0}
+#fb-image-export .fbi-extra{border-top:1px solid var(--SmartThemeBorderColor,#444);margin-top:8px}
+#fb-image-export summary{padding:10px 0;cursor:pointer;font-weight:bold}
+#fb-image-export .fbi-extra fieldset{margin:0 0 10px;display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;min-width:0}
+#fb-image-export .fbi-extra label{margin:3px 0;font-size:13px}
+#fb-image-export .fbi-workspace{display:flex;flex-direction:column;min-height:0;min-width:0}
+#fb-image-export .fbi-progress{padding:12px 14px;border-bottom:1px solid var(--SmartThemeBorderColor,#444)}
+#fb-image-export .fbi-status{font-size:13px}
+#fb-image-export .fbi-warnings{font-size:13px;white-space:pre-wrap;margin-top:8px;max-height:90px;overflow:auto}
+#fb-image-export .fbi-warnings:empty{display:none}
+#fb-image-export .fbi-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+#fb-image-export .fbi-actions .fbi-generate,#fb-image-export .fbi-actions .fbi-save{border-color:var(--SmartThemeQuoteColor,#8ab4f8)}
+#fb-image-export .fbi-page-nav{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+#fb-image-export .fbi-page-count{font-size:12px;opacity:.7}
+#fb-image-export .fbi-preview{padding:18px;overflow:auto;flex:1;min-height:0;background:rgba(0,0,0,.12);text-align:center}
+#fb-image-export .fbi-layout-preview{box-shadow:0 3px 18px rgba(0,0,0,.3);overflow:hidden}
+#fb-image-export .fbi-preview figure{margin:0 auto 18px;max-width:720px}
+#fb-image-export .fbi-preview img{display:block;max-width:100%;height:auto;margin:auto;box-shadow:0 3px 18px rgba(0,0,0,.3)}
+#fb-image-export figcaption{margin-top:8px;opacity:.7;font-size:12px}
+#fb-image-export .fbi-preview button{margin-top:8px}
+#fb-image-export [hidden]{display:none!important}
+@media(max-width:650px){#fb-image-export{padding:4px}#fb-image-export .fbi-dialog{height:100%;border-radius:8px}#fb-image-export .fbi-layout{display:flex;flex-direction:column;overflow:auto}#fb-image-export .fbi-options{border-right:0;border-bottom:1px solid var(--SmartThemeBorderColor,#444);overflow:visible;padding:10px 14px;flex:none}#fb-image-export .fbi-sizes{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin:10px 0}#fb-image-export .fbi-sizes legend{grid-column:1/-1}#fb-image-export .fbi-sizes>label{grid-column:1}#fb-image-export .fbi-size-control{grid-column:2;grid-template-columns:minmax(0,1fr) 76px}#fb-image-export .fbi-workspace{overflow:visible;flex:none}#fb-image-export .fbi-preview{overflow:visible;min-height:200px}#fb-image-export .fbi-header{padding:10px 14px}}

@@ -10,8 +10,14 @@ desktop.ini
 *.tmp
 *.bak
 
-# 依赖（本插件无依赖，防止误提交）
+# 开发依赖与可再生成的测试产物
 node_modules/
+.test-output/
 
 # 开发记录（仅本地留存，不随插件发布）
 开发记录.md
+
+# Local development files stay outside the plugin release
+/tests/
+/vendor/README.md
+/distribution/
