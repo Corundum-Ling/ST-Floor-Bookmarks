@@ -331,6 +331,94 @@ function makePreview(html, max = 140) {
     return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/** 将已识别的生图界面投影为静态图片；只改 root，source 可提供运行态 shadow/iframe。 */
+function prepareImageSnapshot(root, source = root) {
+    const doc = root.ownerDocument;
+    const blobWarning = '生成图片使用临时 blob 地址，刷新后可能无法加载；请回到原楼层重新收藏。';
+    function missingNotice(text) {
+        const warning = doc.createElement('span');
+        warning.textContent = text;
+        warning.dataset.fbCaptureWarning = text;
+        warning.style.cssText = 'display:block;padding:12px;border:1px dashed currentColor;line-height:1.6';
+        return warning;
+    }
+    function imageUrl(image) {
+        const value = image.currentSrc || image.getAttribute('src');
+        if (!value) return '';
+        try {
+            const url = new URL(value, image.ownerDocument.baseURI);
+            const current = new URL(document.baseURI);
+            const oldLocalMedia = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+                && url.port === current.port && /^\/user\/(?:images|files)\//.test(url.pathname);
+            if (/^https?:$/.test(url.protocol) && (url.origin === current.origin || oldLocalMedia)) return url.pathname + url.search + url.hash;
+            return url.href;
+        }
+        catch { return ''; }
+    }
+    function freezeImage(image) {
+        const url = imageUrl(image);
+        if (!url) return null;
+        const copy = doc.createElement('img');
+        copy.src = url;
+        copy.alt = image.alt || '生成图片';
+        const width = image.getAttribute('width');
+        if (/^\d+$/.test(width || '') && Number(width) > 0) copy.setAttribute('width', width);
+        copy.style.cssText = 'max-width:100%;height:auto;display:block';
+        if (url.startsWith('blob:')) copy.dataset.fbCaptureWarning = blobWarning;
+        return copy;
+    }
+    const sourceImages = [...source.querySelectorAll('img')];
+    [...root.querySelectorAll('img')].forEach((image, i) => {
+        const original = sourceImages[i] || image;
+        const url = imageUrl(original);
+        if (url) {
+            image.setAttribute('src', url);
+            if (url.startsWith('blob:')) image.dataset.fbCaptureWarning = blobWarning;
+        } else if (!['srcset', 'data-src', 'data-lazy', 'data-full-src'].some(attr => original.getAttribute(attr))) {
+            // 智绘姬同一段落中的空 img 是已被真实生成图取代的占位；孤立缺源图则明确提示。
+            const scope = original.closest('.st-chatu8-image-container') || original.closest('p');
+            const hasChatuImage = scope && [...scope.querySelectorAll('.st-chatu8-image-container img')].some(other => other !== original && imageUrl(other));
+            if (hasChatuImage) image.remove();
+            else image.replaceWith(missingNotice(image.dataset.fbCaptureWarning || '图片未随快照保存可加载的来源，无法从这份收藏恢复；请回到原楼层重新收藏。'));
+        }
+    });
+    const originals = [...source.querySelectorAll('[data-bbi-slot], iframe')];
+    const targets = [...root.querySelectorAll('[data-bbi-slot], iframe')];
+    targets.forEach((target, i) => {
+        const original = originals[i];
+        if (!original || !target.parentNode) return;
+        if (original.matches('[data-bbi-slot]')) {
+            const image = original.shadowRoot?.querySelector('.bbi-figure__img') || original.querySelector('img');
+            const frozen = image && freezeImage(image);
+            if (frozen) target.replaceWith(frozen);
+            else {
+                target.replaceWith(missingNotice('柏宝绘图片未随快照保存，无法从这份收藏恢复；请回到原楼层，待图片显示后重新收藏。'));
+            }
+        } else {
+            // 仅提取已识别的智绘姬图片，不执行或复制 iframe 的正文、脚本和交互。
+            try {
+                const images = [...(original.contentDocument?.querySelectorAll('.st-chatu8-image-container img') || [])].map(freezeImage).filter(Boolean);
+                if (images.length) target.replaceWith(...images);
+            } catch { /* 跨域或尚未就绪的 iframe 沿用原有不支持边界。 */ }
+        }
+    });
+    for (const container of root.querySelectorAll('.st-chatu8-image-container')) {
+        // 智绘姬在加载后固定原楼层图片高度；快照变窄时需要移除该占位。
+        if (container.querySelector('img')) container.style.removeProperty('min-height');
+    }
+    for (const wrapper of root.querySelectorAll('.st-chatu8-collapse-wrapper')) {
+        if (!wrapper.querySelector('.st-chatu8-image-container img')) continue;
+        wrapper.classList.remove('collapsed');
+        wrapper.dataset.collapsed = 'false';
+        wrapper.querySelectorAll('.st-chatu8-collapse-header').forEach(header => header.style.setProperty('display', 'none', 'important'));
+        for (const content of wrapper.querySelectorAll('.st-chatu8-collapse-content')) {
+            content.style.setProperty('max-height', 'none', 'important');
+            content.style.setProperty('opacity', '1', 'important');
+            content.style.setProperty('overflow', 'visible', 'important');
+        }
+    }
+}
+
 /** 取某层当前显示版本的 HTML 快照 */
 function captureFloor(mesid) {
     const c = ctx();
@@ -343,7 +431,9 @@ function captureFloor(mesid) {
     const el = document.querySelector(`.mes[mesid="${mesid}"] .mes_text`);
     let html;
     if (el) {
-        html = el.innerHTML;
+        const snapshot = el.cloneNode(true);
+        prepareImageSnapshot(snapshot, el);
+        html = snapshot.innerHTML;
     } else {
         // 未渲染时退回原始文本（当前 swipe 版本，注意 m.mes 永远是第 0 个）
         const raw = Array.isArray(m.swipes) && m.swipes.length > 0
@@ -1346,7 +1436,9 @@ function offsetInBody(body, container, offset) {
     const r = document.createRange();
     r.selectNodeContents(body);
     r.setEnd(container, offset);
-    return r.toString().length;
+    const content = r.cloneContents();
+    content.querySelectorAll('[data-fb-capture-warning]').forEach(el => el.remove());
+    return content.textContent.length;
 }
 
 /** 按「快照 HTML + marks」重画正文，并尽量保住滚动位置 */
@@ -1357,6 +1449,7 @@ function renderViewerBody(keepScroll = true) {
     body.innerHTML = viewerFull?.html
         || `<div class="fb-empty">${escapeHtml(viewerEmptyText || '(内容为空)')}</div>`;
     applyMarks(body, viewerFull?.marks);
+    prepareImageSnapshot(body);
     body.scrollTop = top;
 }
 
@@ -1375,6 +1468,7 @@ function applyMarks(body, marks) {
     const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
     let pos = 0;
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n.parentElement.closest('[data-fb-capture-warning]')) continue;
         nodes.push({ node: n, start: pos, end: pos + n.data.length });
         pos += n.data.length;
     }
